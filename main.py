@@ -26,11 +26,63 @@ while True:
         time_frame = "15m"
         limit = 500
 
+        available_tiers = exchange.fetch_leverage_tiers(symbols=[symbol])
+        coin = symbol[:-4]
+        max_lev = int(available_tiers[f'{coin}/USDT:USDT'][0]['maxLeverage'])
+
+        exchange.set_leverage(leverage=max_lev, symbol=symbol)
+
         df = create_df(exchange=exchange, symbol=symbol,
                        time_frame=time_frame, limit=limit)
-        
-        print(df)
-        time.sleep(1)
+
+        long_signal = df['long'].iloc[-2]
+        short_signal = df['short'].iloc[-2]
+
+        if long_signal:
+            entry_price = df['Open'].iloc[-1]
+            sl = entry_price - round((df['ATR'].iloc[-2] * 4), 1)
+            distance = entry_price - sl
+            balance = exchange.fetch_balance()['USDT']['free']
+            position_size = round((balance * 0.01) / distance, 3)
+            tp = entry_price + round((df['ATR'].iloc[-2] * 7), 1)
+            callbackRate = 0.1
+
+            position = exchange.create_market_buy_order(
+                symbol=symbol, amount=position_size)
+
+            tp_order = exchange.create_order(symbol=symbol, type="TRAILING_STOP_MARKET", side="sell", amount=position_size, price=tp, params={
+                "reduceOnly": True,
+                "type": "TRAILING_STOP_MARKET",
+                "activationPrice": tp,
+                "callbackRate": callbackRate,
+            })
+
+            sl_order = exchange.create_limit_sell_order(symbol=symbol, amount=position_size, price=sl, params={
+                "stopLossPrice": sl,
+                "reduceOnly": True
+            })
+
+        elif short_signal:
+            entry_price = df['open'].iloc[-1]
+            sl = round((df['ATR'].iloc[-2] * 4), 1) + entry_price
+            distance = sl - entry_price
+            balance = exchange.fetch_balance()['USDT']['free']
+            position_size = round((balance * 0.01) / distance, 3)
+            tp = entry_price - round((df['ATR'].iloc[-2] * 7), 1)
+
+            position = exchange.create_market_sell_order(symbol=symbol, amount=position_size)
+
+            tp_order = exchange.create_order(symbol=symbol, type="TRAILING_STOP_MARKET", side="buy", amount=position_size, price=tp, params={
+                "reduceOnly": True,
+                "type": "TRAILING_STOP_MARKET",
+                "activationPrice": tp,
+                "callbackRate": callbackRate,
+            })
+
+            sl_order = exchange.create_limit_buy_order(symbol=symbol, amount=position_size, price=sl, params={
+                "stopLossPrice": sl,
+                "reduceOnly": True
+            })
 
     except ccxt.RequestTimeout as e:
         print(type(e).__name__, str(e))
